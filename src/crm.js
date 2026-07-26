@@ -49,12 +49,20 @@ async function sendToCrm(ctx, data) {
     return;
   }
 
+  // CRM 'destination' ni majburiy qiladi. Kassa oqimida shahar yo'q — shuning
+  // uchun yo'nalish matnini xizmat turi bilan birga destination sifatida yuboramiz.
+  // Shunda lead CRM'ga tushadi va menejer nima ekanini darhol ko'radi.
+  const isTicket = data.service_type === 'aviakassa' || data.service_type === 'temir_yol';
+  const crmDestination = isTicket
+    ? serviceTypeText(data.service_type) + ': ' + (data.route || '—')
+    : (data.destination || undefined);
+
   const payload = {
     phone: data.phone,
     serviceType: data.service_type || 'sayohat',
     serviceTypeText: serviceTypeText(data.service_type),
     route: data.route || undefined,
-    destination: data.destination || undefined,
+    destination: crmDestination,
     hotelStars: data.hotel_stars ? parseInt(data.hotel_stars, 10) : undefined,
     travelDateText: data.travel_date,
     travelers: peopleToNumber(data.people_count),
