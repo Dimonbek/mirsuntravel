@@ -41,12 +41,12 @@ function previousState(state, data) {
     case S.ASK_CUSTOM_DEST: return S.ASK_DEST;
     case S.ASK_STARS: return S.ASK_DEST;
     case S.ASK_DATE: return S.ASK_STARS;
-    case S.ASK_PEOPLE: return ticket ? S.ASK_ROUTE : S.ASK_DATE;
+    case S.ASK_PEOPLE: return S.ASK_DATE;
     case S.ASK_PEOPLE_CUSTOM: return S.ASK_PEOPLE;
-    case S.ASK_CHILDREN: return S.ASK_PEOPLE;
+    case S.ASK_CHILDREN: return ticket ? S.ASK_ROUTE : S.ASK_PEOPLE;
     case S.ASK_CHILDREN_COUNT: return S.ASK_CHILDREN;
     case S.ASK_CHILD_AGE: return S.ASK_CHILDREN_COUNT;
-    case S.ASK_PAYMENT: return ticket ? S.ASK_PEOPLE : (hasChildren ? S.ASK_CHILD_AGE : S.ASK_CHILDREN);
+    case S.ASK_PAYMENT: return hasChildren ? S.ASK_CHILD_AGE : S.ASK_CHILDREN;
     case S.ASK_INSTALLMENT: return S.ASK_PAYMENT;
     case S.ASK_TIME: return S.ASK_PAYMENT;
     default: return null;
@@ -324,39 +324,50 @@ survey.action(/^people:(.+)$/, async (ctx) => {
   } else {
     ctx.session.surveyData.people_count = val;
   }
-  // Kassa oqimida bolalar so'ralmaydi — to'g'ridan to'lovga
-  if (isTicket(ctx.session.surveyData)) await promptState(ctx, S.ASK_PAYMENT);
-  else await promptState(ctx, S.ASK_CHILDREN);
+  await promptState(ctx, S.ASK_CHILDREN);
 });
 
 survey.action(/^children_(yes|no)$/, async (ctx) => {
   if (ctx.session.state !== S.ASK_CHILDREN) return ctx.answerCbQuery();
   const hasChildren = ctx.match[1] === 'yes';
+  const ticket = isTicket(ctx.session.surveyData);
   await ctx.answerCbQuery();
-  const peopleCount = parseInt(ctx.session.surveyData.people_count) || 0;
-  if (hasChildren && peopleCount <= 1) {
-    const lang = ctx.session.lang || 'uz';
-    await ctx.reply(lang === 'uz'
-      ? "❌ Bolalar bo'lsa, kamida 2 kishi bo'lishi kerak."
-      : '❌ Если есть дети, нужно минимум 2 человека.');
-    await promptState(ctx, S.ASK_CHILDREN);
-    return;
+  // Odam soni tekshiruvi faqat sayohatda (kassada yo'lovchi soni yo'q)
+  if (!ticket) {
+    const peopleCount = parseInt(ctx.session.surveyData.people_count) || 0;
+    if (hasChildren && peopleCount <= 1) {
+      const lang = ctx.session.lang || 'uz';
+      await ctx.reply(lang === 'uz'
+        ? "❌ Bolalar bo'lsa, kamida 2 kishi bo'lishi kerak."
+        : '❌ Если есть дети, нужно минимум 2 человека.');
+      await promptState(ctx, S.ASK_CHILDREN);
+      return;
+    }
   }
   ctx.session.surveyData.has_children = hasChildren;
-  if (hasChildren) await promptState(ctx, S.ASK_CHILDREN_COUNT);
-  else await promptState(ctx, S.ASK_PAYMENT);
+  if (hasChildren) {
+    await promptState(ctx, S.ASK_CHILDREN_COUNT);
+  } else if (ticket) {
+    // Kassa: bola yo'q → so'rov tugadi
+    await finishSurvey(ctx);
+  } else {
+    await promptState(ctx, S.ASK_PAYMENT);
+  }
 });
 
 survey.action(/^cc:(\d+)$/, async (ctx) => {
   if (ctx.session.state !== S.ASK_CHILDREN_COUNT) return ctx.answerCbQuery();
   const cnt = parseInt(ctx.match[1]);
-  const peopleCount = parseInt(ctx.session.surveyData.people_count) || 0;
   const lang = ctx.session.lang || 'uz';
-  if (cnt >= peopleCount) {
-    await ctx.answerCbQuery();
-    const msg = t(lang, 'invalidChildrenMath').replace('{p}', peopleCount).replace('{c}', cnt);
-    await ctx.reply(msg);
-    return;
+  // Bolalar soni < odam soni tekshiruvi faqat sayohatda
+  if (!isTicket(ctx.session.surveyData)) {
+    const peopleCount = parseInt(ctx.session.surveyData.people_count) || 0;
+    if (cnt >= peopleCount) {
+      await ctx.answerCbQuery();
+      const msg = t(lang, 'invalidChildrenMath').replace('{p}', peopleCount).replace('{c}', cnt);
+      await ctx.reply(msg);
+      return;
+    }
   }
   await ctx.answerCbQuery();
   ctx.session.surveyData.children_count = String(cnt);
@@ -376,7 +387,9 @@ survey.action(/^age:(.+)$/, async (ctx) => {
   const total = parseInt(ctx.session.surveyData.children_count) || 0;
   if (ctx.session.currentChild >= total) {
     ctx.session.surveyData.children_ages = ctx.session.childAges.join(', ');
-    await promptState(ctx, S.ASK_PAYMENT);
+    // Kassa: yoshlardan keyin so'rov tugadi; sayohat: to'lovga o'tadi
+    if (isTicket(ctx.session.surveyData)) await finishSurvey(ctx);
+    else await promptState(ctx, S.ASK_PAYMENT);
   } else {
     ctx.session.currentChild++;
     await promptState(ctx, S.ASK_CHILD_AGE);
@@ -466,7 +479,8 @@ survey.on('text', async (ctx) => {
       }
       ctx.session.surveyData.route = text;
       await tryDeleteUserMsg(ctx);
-      await promptState(ctx, S.ASK_PEOPLE);
+      // Kassa: yo'lovchi soni yo'q — to'g'ridan bolalar savoliga
+      await promptState(ctx, S.ASK_CHILDREN);
       break;
     case S.ASK_DEST:
       await promptState(ctx, S.ASK_DEST);
@@ -496,8 +510,7 @@ survey.on('text', async (ctx) => {
       }
       ctx.session.surveyData.people_count = text;
       await tryDeleteUserMsg(ctx);
-      if (isTicket(ctx.session.surveyData)) await promptState(ctx, S.ASK_PAYMENT);
-      else await promptState(ctx, S.ASK_CHILDREN);
+      await promptState(ctx, S.ASK_CHILDREN);
       break;
     case S.ASK_CHILDREN:
       await promptState(ctx, S.ASK_CHILDREN);
@@ -547,27 +560,28 @@ async function sendToGroup(ctx, data) {
   const userInfo = ctx.from.first_name || username;
   const ticket = isTicket(data);
 
+  const childrenText = data.has_children
+    ? `${t(lang, 'g_childrenYes')} (${data.children_count}, ${t(lang, 'g_childrenAges')}: ${data.children_ages})`
+    : t(lang, 'g_childrenNo');
+
   let message = t(lang, 'g_newRequest') + '\n\n';
   if (data.service_type) {
     message += t(lang, 'g_service') + ': ' + serviceText(lang, data.service_type) + '\n';
   }
   if (ticket) {
-    // Kassa: yo'nalish+sana bitta matn, shahar/yulduz/bola yo'q
+    // Kassa: yo'nalish+sana matni va bolalar (shahar/yulduz/yo'lovchi/to'lov/vaqt yo'q)
     message += t(lang, 'g_route') + ': ' + (data.route || '—') + '\n';
-    message += t(lang, 'g_people') + ': ' + data.people_count + '\n';
+    message += t(lang, 'g_children') + ': ' + childrenText + '\n';
   } else {
-    const childrenText = data.has_children
-      ? `${t(lang, 'g_childrenYes')} (${data.children_count}, ${t(lang, 'g_childrenAges')}: ${data.children_ages})`
-      : t(lang, 'g_childrenNo');
     message += t(lang, 'g_destination') + ': ' + data.destination + '\n';
     if (data.hotel_stars) message += t(lang, 'g_hotelStars') + ': ' + starsText(lang, data.hotel_stars) + '\n';
     message += t(lang, 'g_date') + ': ' + data.travel_date + '\n';
     message += t(lang, 'g_people') + ': ' + data.people_count + '\n';
     message += t(lang, 'g_children') + ': ' + childrenText + '\n';
+    if (data.payment_type) message += t(lang, 'g_paymentType') + ': ' + paymentText(lang, data.payment_type) + '\n';
   }
-  if (data.payment_type) message += t(lang, 'g_paymentType') + ': ' + paymentText(lang, data.payment_type) + '\n';
+  if (data.contact_time) message += t(lang, 'g_contactTime') + ': ' + data.contact_time + '\n';
   message +=
-    t(lang, 'g_contactTime') + ': ' + data.contact_time + '\n' +
     t(lang, 'g_phone') + ': ' + data.phone + '\n' +
     t(lang, 'g_username') + ': ' + username + '\n' +
     '👤 ' + (lang === 'uz' ? 'Foydalanuvchi' : 'Пользователь') + ': ' + userInfo;
