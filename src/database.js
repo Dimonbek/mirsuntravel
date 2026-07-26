@@ -85,6 +85,10 @@ db.exec(`
 // Mavjud yozuvlarda NULL bo'lib qoladi — ma'lumot yo'qolmaydi.
 try { db.exec('ALTER TABLE surveys ADD COLUMN manager TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE surveys ADD COLUMN campaign_code TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE surveys ADD COLUMN service_type TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE surveys ADD COLUMN route TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE surveys ADD COLUMN payment_type TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE surveys ADD COLUMN hotel_stars TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE surveys ADD COLUMN hotel_stars TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE surveys ADD COLUMN payment_type TEXT'); } catch (e) {}
 
@@ -186,11 +190,12 @@ const dbApi = {
 
   saveSurvey(data) {
     return db.prepare(`
-      INSERT INTO surveys (telegram_id, full_name, destination, hotel_stars, travel_date, people_count, has_children, children_count, children_ages, payment_type, contact_time, phone, manager, campaign_code, language)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO surveys (telegram_id, full_name, service_type, route, destination, hotel_stars, travel_date, people_count, has_children, children_count, children_ages, payment_type, contact_time, phone, manager, campaign_code, language)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      data.telegram_id, data.full_name || null, data.destination, data.hotel_stars || null,
-      data.travel_date, data.people_count, data.has_children ? 1 : 0, data.children_count || null,
+      data.telegram_id, data.full_name || null, data.service_type || null, data.route || null,
+      data.destination || null, data.hotel_stars || null,
+      data.travel_date || null, data.people_count || null, data.has_children ? 1 : 0, data.children_count || null,
       data.children_ages || null, data.payment_type || null, data.contact_time, data.phone,
       data.manager || null, data.campaign_code || null, data.language
     );
@@ -210,7 +215,8 @@ const dbApi = {
       today: db.prepare("SELECT COUNT(*) as c FROM surveys WHERE created_at >= ?").get(todayStart).c,
       week: db.prepare("SELECT COUNT(*) as c FROM surveys WHERE created_at >= ?").get(weekStart).c,
       month: db.prepare("SELECT COUNT(*) as c FROM surveys WHERE created_at >= ?").get(monthStart).c,
-      destinations: db.prepare('SELECT destination, COUNT(*) as c FROM surveys GROUP BY destination ORDER BY c DESC LIMIT 5').all(),
+      services: db.prepare('SELECT service_type, COUNT(*) as c FROM surveys WHERE service_type IS NOT NULL GROUP BY service_type ORDER BY c DESC').all(),
+      destinations: db.prepare('SELECT destination, COUNT(*) as c FROM surveys WHERE destination IS NOT NULL GROUP BY destination ORDER BY c DESC LIMIT 5').all(),
       stars: db.prepare('SELECT hotel_stars, COUNT(*) as c FROM surveys WHERE hotel_stars IS NOT NULL GROUP BY hotel_stars ORDER BY hotel_stars ASC').all(),
       payments: db.prepare('SELECT payment_type, COUNT(*) as c FROM surveys WHERE payment_type IS NOT NULL GROUP BY payment_type ORDER BY c DESC').all(),
       times: db.prepare('SELECT contact_time, COUNT(*) as c FROM surveys GROUP BY contact_time ORDER BY c DESC').all(),
@@ -233,7 +239,8 @@ const dbApi = {
     const q = (sql) => db.prepare(sql).all(start, end);
     return {
       total: db.prepare('SELECT COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ?').get(start, end).c,
-      destinations: q('SELECT destination, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? GROUP BY destination ORDER BY c DESC LIMIT 10'),
+      services: q('SELECT service_type, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? AND service_type IS NOT NULL GROUP BY service_type ORDER BY c DESC'),
+      destinations: q('SELECT destination, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? AND destination IS NOT NULL GROUP BY destination ORDER BY c DESC LIMIT 10'),
       stars: q('SELECT hotel_stars, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? AND hotel_stars IS NOT NULL GROUP BY hotel_stars ORDER BY hotel_stars ASC'),
       payments: q('SELECT payment_type, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? AND payment_type IS NOT NULL GROUP BY payment_type ORDER BY c DESC'),
       times: q('SELECT contact_time, COUNT(*) as c FROM surveys WHERE created_at >= ? AND created_at < ? GROUP BY contact_time ORDER BY c DESC'),

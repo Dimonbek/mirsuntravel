@@ -15,11 +15,23 @@ function childrenText(data) {
   return `Ha${parts.length ? ' (' + parts.join(', ') + ')' : ''}`;
 }
 
-// 'naqd' / 'nasiya' → CRM da o'qiladigan matn
+// 'naqd' / 'nasiya' / 'nasiya:anor' → CRM da o'qiladigan matn
 function paymentTypeText(paymentType) {
+  if (!paymentType) return undefined;
   if (paymentType === 'naqd') return 'Naqd';
   if (paymentType === 'nasiya') return 'Nasiya';
+  if (paymentType.startsWith('nasiya:')) {
+    const name = paymentType.slice(7);
+    return 'Nasiya (' + name.charAt(0).toUpperCase() + name.slice(1) + ')';
+  }
   return undefined;
+}
+
+// 'sayohat' / 'aviakassa' / 'temir_yol' → CRM matni
+function serviceTypeText(serviceType) {
+  if (serviceType === 'aviakassa') return 'Aviakassa';
+  if (serviceType === 'temir_yol') return "Temir yo'l kassa";
+  return 'Sayohat';
 }
 
 /** Startupда holatni ko'rsatish uchun */
@@ -39,7 +51,10 @@ async function sendToCrm(ctx, data) {
 
   const payload = {
     phone: data.phone,
-    destination: data.destination,
+    serviceType: data.service_type || 'sayohat',
+    serviceTypeText: serviceTypeText(data.service_type),
+    route: data.route || undefined,
+    destination: data.destination || undefined,
     hotelStars: data.hotel_stars ? parseInt(data.hotel_stars, 10) : undefined,
     travelDateText: data.travel_date,
     travelers: peopleToNumber(data.people_count),

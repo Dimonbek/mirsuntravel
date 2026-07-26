@@ -37,10 +37,25 @@ const STAR_OPTIONS = [
   { key: '5', tKey: 'star5' },
 ];
 
+// Xizmat turi — key bazaga o'zgarmas holda yoziladi
+const SERVICE_OPTIONS = [
+  { key: 'sayohat', tKey: 'svcTravel' },
+  { key: 'aviakassa', tKey: 'svcAir' },
+  { key: 'temir_yol', tKey: 'svcRail' },
+];
+
 // To'lov turi — key bazaga o'zgarmas holda yoziladi ('naqd','nasiya')
 const PAYMENT_OPTIONS = [
   { key: 'naqd', tKey: 'payCash' },
   { key: 'nasiya', tKey: 'payInstallment' },
+];
+
+// Nasiya turlari — bazaga 'nasiya:anor' ko'rinishida yoziladi
+const INSTALLMENT_OPTIONS = [
+  { key: 'anor', tKey: 'instAnor' },
+  { key: 'uzum', tKey: 'instUzum' },
+  { key: 'zoodpay', tKey: 'instZoodpay' },
+  { key: 'paylater', tKey: 'instPaylater' },
 ];
 
 function languageInline() {
@@ -50,6 +65,13 @@ function languageInline() {
       Markup.button.callback('🇷🇺 Русский', 'lang_ru'),
     ]
   ]);
+}
+
+function serviceInline(lang) {
+  const rows = SERVICE_OPTIONS.map(opt => [
+    Markup.button.callback(t(lang, opt.tKey), `svc:${opt.key}`)
+  ]);
+  return Markup.inlineKeyboard(rows);
 }
 
 function destinationsInline(lang) {
@@ -145,6 +167,19 @@ function paymentInline(lang) {
   return Markup.inlineKeyboard(rows);
 }
 
+function installmentInline(lang) {
+  const rows = [];
+  for (let i = 0; i < INSTALLMENT_OPTIONS.length; i += 2) {
+    const row = [Markup.button.callback(t(lang, INSTALLMENT_OPTIONS[i].tKey), `inst:${INSTALLMENT_OPTIONS[i].key}`)];
+    if (INSTALLMENT_OPTIONS[i + 1]) {
+      row.push(Markup.button.callback(t(lang, INSTALLMENT_OPTIONS[i + 1].tKey), `inst:${INSTALLMENT_OPTIONS[i + 1].key}`));
+    }
+    rows.push(row);
+  }
+  rows.push([Markup.button.callback(t(lang, 'backBtn'), 'back')]);
+  return Markup.inlineKeyboard(rows);
+}
+
 function contactTimesInline(lang) {
   const times = dbApi.getContactTimes();
   const rows = [];
@@ -180,8 +215,11 @@ module.exports = {
   DATE_OPTIONS,
   AGE_OPTIONS,
   STAR_OPTIONS,
+  SERVICE_OPTIONS,
   PAYMENT_OPTIONS,
+  INSTALLMENT_OPTIONS,
   languageInline,
+  serviceInline,
   destinationsInline,
   datesInline,
   peopleInline,
@@ -190,6 +228,7 @@ module.exports = {
   childAgeInline,
   hotelStarsInline,
   paymentInline,
+  installmentInline,
   contactTimesInline,
   backInline,
   phoneReply,

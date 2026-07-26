@@ -9,6 +9,8 @@ const SURVEY_SCENE = 'survey';
 const S = {
   PICK_LANG: 'pick_lang',
   ASK_PHONE: 'ask_phone',
+  ASK_SERVICE: 'ask_service',
+  ASK_ROUTE: 'ask_route',
   ASK_DEST: 'ask_dest',
   ASK_CUSTOM_DEST: 'ask_custom_dest',
   ASK_STARS: 'ask_stars',
@@ -19,22 +21,33 @@ const S = {
   ASK_CHILDREN_COUNT: 'ask_children_count',
   ASK_CHILD_AGE: 'ask_child_age',
   ASK_PAYMENT: 'ask_payment',
+  ASK_INSTALLMENT: 'ask_installment',
   ASK_TIME: 'ask_time',
 };
 
-function previousState(state, hasChildren) {
+// Aviakassa/temir yo'l — sayohatdan farqli qisqa oqim (shahar/yulduz/bola so'ralmaydi)
+function isTicket(data) {
+  return data && (data.service_type === 'aviakassa' || data.service_type === 'temir_yol');
+}
+
+function previousState(state, data) {
+  const hasChildren = data && data.has_children;
+  const ticket = isTicket(data);
   switch (state) {
     case S.ASK_PHONE: return null;
-    case S.ASK_DEST: return S.ASK_PHONE;
+    case S.ASK_SERVICE: return S.ASK_PHONE;
+    case S.ASK_ROUTE: return S.ASK_SERVICE;
+    case S.ASK_DEST: return S.ASK_SERVICE;
     case S.ASK_CUSTOM_DEST: return S.ASK_DEST;
     case S.ASK_STARS: return S.ASK_DEST;
     case S.ASK_DATE: return S.ASK_STARS;
-    case S.ASK_PEOPLE: return S.ASK_DATE;
+    case S.ASK_PEOPLE: return ticket ? S.ASK_ROUTE : S.ASK_DATE;
     case S.ASK_PEOPLE_CUSTOM: return S.ASK_PEOPLE;
     case S.ASK_CHILDREN: return S.ASK_PEOPLE;
     case S.ASK_CHILDREN_COUNT: return S.ASK_CHILDREN;
     case S.ASK_CHILD_AGE: return S.ASK_CHILDREN_COUNT;
-    case S.ASK_PAYMENT: return hasChildren ? S.ASK_CHILD_AGE : S.ASK_CHILDREN;
+    case S.ASK_PAYMENT: return ticket ? S.ASK_PEOPLE : (hasChildren ? S.ASK_CHILD_AGE : S.ASK_CHILDREN);
+    case S.ASK_INSTALLMENT: return S.ASK_PAYMENT;
     case S.ASK_TIME: return S.ASK_PAYMENT;
     default: return null;
   }
@@ -47,8 +60,20 @@ function starsText(lang, stars) {
   return opt ? t(lang, opt.tKey) : String(stars);
 }
 
+// payment_type: 'naqd' yoki 'nasiya:anor' ko'rinishida saqlanadi
 function paymentText(lang, key) {
+  if (!key) return '';
+  if (key.startsWith('nasiya:')) {
+    const inst = kb.INSTALLMENT_OPTIONS.find(o => o.key === key.slice(7));
+    const base = t(lang, 'payInstallment');
+    return inst ? base + ' (' + t(lang, inst.tKey) + ')' : base;
+  }
   const opt = kb.PAYMENT_OPTIONS.find(o => o.key === key);
+  return opt ? t(lang, opt.tKey) : String(key);
+}
+
+function serviceText(lang, key) {
+  const opt = kb.SERVICE_OPTIONS.find(o => o.key === key);
   return opt ? t(lang, opt.tKey) : String(key);
 }
 
@@ -99,6 +124,12 @@ async function promptState(ctx, state) {
     case S.ASK_PHONE:
       sent = await ctx.reply(t(lang, 'askPhone'), kb.phoneReply(lang));
       break;
+    case S.ASK_SERVICE:
+      sent = await ctx.reply(t(lang, 'chooseService'), kb.serviceInline(lang));
+      break;
+    case S.ASK_ROUTE:
+      sent = await ctx.reply(t(lang, 'askRoute'), { ...opts, ...kb.backInline(lang) });
+      break;
     case S.ASK_DEST:
       sent = await ctx.reply(t(lang, 'askDestination'), { ...opts, ...kb.destinationsInline(lang) });
       break;
@@ -132,6 +163,9 @@ async function promptState(ctx, state) {
     }
     case S.ASK_PAYMENT:
       sent = await ctx.reply(t(lang, 'askPaymentType'), kb.paymentInline(lang));
+      break;
+    case S.ASK_INSTALLMENT:
+      sent = await ctx.reply(t(lang, 'askInstallment'), kb.installmentInline(lang));
       break;
     case S.ASK_TIME:
       sent = await ctx.reply(t(lang, 'askContactTime'), kb.contactTimesInline(lang));
@@ -182,12 +216,21 @@ survey.action(/^lang_(uz|ru)$/, async (ctx) => {
 
 survey.action('back', async (ctx) => {
   await ctx.answerCbQuery();
-  const hasChildren = ctx.session.surveyData && ctx.session.surveyData.has_children;
-  const currentState = ctx.session.state;
-  const prev = previousState(currentState, hasChildren);
-  if (!prev) return;
   const data = ctx.session.surveyData || {};
-  if (currentState === S.ASK_DEST || currentState === S.ASK_CUSTOM_DEST) {
+  const hasChildren = data.has_children;
+  const currentState = ctx.session.state;
+  const prev = previousState(currentState, data);
+  if (!prev) return;
+  if (currentState === S.ASK_ROUTE) {
+    // Yo'nalish matnidan xizmat tanloviga qaytiladi
+    delete data.route;
+    delete data.service_type;
+  } else if (currentState === S.ASK_DEST) {
+    // Shaharlar ro'yxatidan xizmat tanloviga qaytiladi
+    delete data.destination;
+    delete data.service_type;
+  } else if (currentState === S.ASK_CUSTOM_DEST) {
+    // "Boshqa shahar" matnidan shaharlar ro'yxatiga qaytiladi (xizmat saqlanadi)
     delete data.destination;
   } else if (currentState === S.ASK_STARS) {
     delete data.hotel_stars;
@@ -223,6 +266,21 @@ survey.action('back', async (ctx) => {
     delete data.contact_time;
   }
   await promptState(ctx, prev);
+});
+
+survey.action(/^svc:(.+)$/, async (ctx) => {
+  if (ctx.session.state !== S.ASK_SERVICE) return ctx.answerCbQuery();
+  const option = kb.SERVICE_OPTIONS.find(o => o.key === ctx.match[1]);
+  if (!option) return ctx.answerCbQuery();
+  const lang = ctx.session.lang || 'uz';
+  await ctx.answerCbQuery('✅ ' + t(lang, option.tKey));
+  ctx.session.surveyData.service_type = option.key;
+  // Sayohat → shaharlar oqimi; aviakassa/temir yo'l → yo'nalish matni
+  if (option.key === 'sayohat') {
+    await promptState(ctx, S.ASK_DEST);
+  } else {
+    await promptState(ctx, S.ASK_ROUTE);
+  }
 });
 
 survey.action(/^dest:(.+)$/, async (ctx) => {
@@ -266,7 +324,9 @@ survey.action(/^people:(.+)$/, async (ctx) => {
   } else {
     ctx.session.surveyData.people_count = val;
   }
-  await promptState(ctx, S.ASK_CHILDREN);
+  // Kassa oqimida bolalar so'ralmaydi — to'g'ridan to'lovga
+  if (isTicket(ctx.session.surveyData)) await promptState(ctx, S.ASK_PAYMENT);
+  else await promptState(ctx, S.ASK_CHILDREN);
 });
 
 survey.action(/^children_(yes|no)$/, async (ctx) => {
@@ -329,7 +389,22 @@ survey.action(/^pay:(.+)$/, async (ctx) => {
   if (!option) return ctx.answerCbQuery();
   const lang = ctx.session.lang || 'uz';
   await ctx.answerCbQuery('✅ ' + t(lang, option.tKey));
-  ctx.session.surveyData.payment_type = option.key;
+  // Nasiya → ichki tanlov (Anor/Uzum/Zoodpay/Paylater); Naqd → to'g'ri vaqtga
+  if (option.key === 'nasiya') {
+    await promptState(ctx, S.ASK_INSTALLMENT);
+  } else {
+    ctx.session.surveyData.payment_type = option.key;
+    await promptState(ctx, S.ASK_TIME);
+  }
+});
+
+survey.action(/^inst:(.+)$/, async (ctx) => {
+  if (ctx.session.state !== S.ASK_INSTALLMENT) return ctx.answerCbQuery();
+  const option = kb.INSTALLMENT_OPTIONS.find(o => o.key === ctx.match[1]);
+  if (!option) return ctx.answerCbQuery();
+  const lang = ctx.session.lang || 'uz';
+  await ctx.answerCbQuery('✅ ' + t(lang, option.tKey));
+  ctx.session.surveyData.payment_type = 'nasiya:' + option.key;
   await promptState(ctx, S.ASK_TIME);
 });
 
@@ -354,7 +429,7 @@ survey.on('contact', async (ctx) => {
     const removeMsg = await ctx.reply('✅', kb.removeReply());
     try { await ctx.telegram.deleteMessage(ctx.chat.id, removeMsg.message_id); } catch (e) {}
   } catch (e) {}
-  await promptState(ctx, S.ASK_DEST);
+  await promptState(ctx, S.ASK_SERVICE);
 });
 
 survey.on('text', async (ctx) => {
@@ -378,9 +453,21 @@ survey.on('text', async (ctx) => {
         const removeMsg = await ctx.reply('✅', kb.removeReply());
         try { await ctx.telegram.deleteMessage(ctx.chat.id, removeMsg.message_id); } catch (e) {}
       } catch (e) {}
-      await promptState(ctx, S.ASK_DEST);
+      await promptState(ctx, S.ASK_SERVICE);
       break;
     }
+    case S.ASK_SERVICE:
+      await promptState(ctx, S.ASK_SERVICE);
+      break;
+    case S.ASK_ROUTE:
+      if (text.length < 3 || text.length > 200) {
+        await ctx.reply(t(lang, 'invalidRoute'), { parse_mode: 'Markdown' });
+        return;
+      }
+      ctx.session.surveyData.route = text;
+      await tryDeleteUserMsg(ctx);
+      await promptState(ctx, S.ASK_PEOPLE);
+      break;
     case S.ASK_DEST:
       await promptState(ctx, S.ASK_DEST);
       break;
@@ -409,7 +496,8 @@ survey.on('text', async (ctx) => {
       }
       ctx.session.surveyData.people_count = text;
       await tryDeleteUserMsg(ctx);
-      await promptState(ctx, S.ASK_CHILDREN);
+      if (isTicket(ctx.session.surveyData)) await promptState(ctx, S.ASK_PAYMENT);
+      else await promptState(ctx, S.ASK_CHILDREN);
       break;
     case S.ASK_CHILDREN:
       await promptState(ctx, S.ASK_CHILDREN);
@@ -422,6 +510,9 @@ survey.on('text', async (ctx) => {
       break;
     case S.ASK_PAYMENT:
       await promptState(ctx, S.ASK_PAYMENT);
+      break;
+    case S.ASK_INSTALLMENT:
+      await promptState(ctx, S.ASK_INSTALLMENT);
       break;
     case S.ASK_TIME:
       await promptState(ctx, S.ASK_TIME);
@@ -452,19 +543,30 @@ async function sendToGroup(ctx, data) {
   const lang = data.language;
   const groupId = dbApi.getSetting('group_id') || process.env.GROUP_ID;
   if (!groupId) return;
-  const childrenText = data.has_children
-    ? `${t(lang, 'g_childrenYes')} (${data.children_count}, ${t(lang, 'g_childrenAges')}: ${data.children_ages})`
-    : t(lang, 'g_childrenNo');
   const username = ctx.from.username ? '@' + ctx.from.username : '—';
   const userInfo = ctx.from.first_name || username;
-  let message =
-    t(lang, 'g_newRequest') + '\n\n' +
-    t(lang, 'g_destination') + ': ' + data.destination + '\n' +
-    (data.hotel_stars ? t(lang, 'g_hotelStars') + ': ' + starsText(lang, data.hotel_stars) + '\n' : '') +
-    t(lang, 'g_date') + ': ' + data.travel_date + '\n' +
-    t(lang, 'g_people') + ': ' + data.people_count + '\n' +
-    t(lang, 'g_children') + ': ' + childrenText + '\n' +
-    (data.payment_type ? t(lang, 'g_paymentType') + ': ' + paymentText(lang, data.payment_type) + '\n' : '') +
+  const ticket = isTicket(data);
+
+  let message = t(lang, 'g_newRequest') + '\n\n';
+  if (data.service_type) {
+    message += t(lang, 'g_service') + ': ' + serviceText(lang, data.service_type) + '\n';
+  }
+  if (ticket) {
+    // Kassa: yo'nalish+sana bitta matn, shahar/yulduz/bola yo'q
+    message += t(lang, 'g_route') + ': ' + (data.route || '—') + '\n';
+    message += t(lang, 'g_people') + ': ' + data.people_count + '\n';
+  } else {
+    const childrenText = data.has_children
+      ? `${t(lang, 'g_childrenYes')} (${data.children_count}, ${t(lang, 'g_childrenAges')}: ${data.children_ages})`
+      : t(lang, 'g_childrenNo');
+    message += t(lang, 'g_destination') + ': ' + data.destination + '\n';
+    if (data.hotel_stars) message += t(lang, 'g_hotelStars') + ': ' + starsText(lang, data.hotel_stars) + '\n';
+    message += t(lang, 'g_date') + ': ' + data.travel_date + '\n';
+    message += t(lang, 'g_people') + ': ' + data.people_count + '\n';
+    message += t(lang, 'g_children') + ': ' + childrenText + '\n';
+  }
+  if (data.payment_type) message += t(lang, 'g_paymentType') + ': ' + paymentText(lang, data.payment_type) + '\n';
+  message +=
     t(lang, 'g_contactTime') + ': ' + data.contact_time + '\n' +
     t(lang, 'g_phone') + ': ' + data.phone + '\n' +
     t(lang, 'g_username') + ': ' + username + '\n' +

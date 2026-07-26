@@ -8,6 +8,15 @@ const MONTHS_UZ = [
   'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr',
 ];
 
+const SERVICE_LABELS = {
+  sayohat: '✈️ Sayohat',
+  aviakassa: '🎫 Aviakassa',
+  temir_yol: "🚂 Temir yo'l kassa",
+};
+function serviceLabel(key) {
+  return SERVICE_LABELS[key] || key || '—';
+}
+
 // Hisobot yuboriladigan Toshkent vaqti (oyning 1-sanasi)
 const REPORT_HOUR = 9;
 
@@ -15,6 +24,10 @@ const REPORT_HOUR = 9;
 function paymentLabel(key) {
   if (key === 'naqd') return 'Naqd';
   if (key === 'nasiya') return 'Nasiya';
+  if (key && key.startsWith('nasiya:')) {
+    const n = key.slice(7);
+    return 'Nasiya (' + n.charAt(0).toUpperCase() + n.slice(1) + ')';
+  }
   return key || '—';
 }
 
@@ -51,6 +64,12 @@ function buildStatsText(range) {
   }
 
   lines.push('👶 Bolalar bilan: ' + s.withChildren);
+
+  if (s.services && s.services.length) {
+    lines.push('');
+    lines.push('🧾 Xizmat turlari:');
+    s.services.forEach(x => lines.push('  • ' + serviceLabel(x.service_type) + ' — ' + x.c));
+  }
 
   if (s.destinations.length) {
     lines.push('');
@@ -113,6 +132,8 @@ async function buildExcel(surveys, filename) {
     { header: 'ID', key: 'id', width: 6 },
     { header: 'Telegram ID', key: 'telegram_id', width: 14 },
     { header: 'Ism', key: 'full_name', width: 25 },
+    { header: 'Xizmat', key: 'service_label', width: 16 },
+    { header: "Yo'nalish/sana (kassa)", key: 'route', width: 24 },
     { header: "Yo'nalish", key: 'destination', width: 20 },
     { header: 'Mehmonxona', key: 'hotel_stars', width: 12 },
     { header: 'Sana', key: 'travel_date', width: 15 },
@@ -131,6 +152,7 @@ async function buildExcel(surveys, filename) {
   ws.getRow(1).font = { bold: true };
   surveys.forEach(s => ws.addRow({
     ...s,
+    service_label: serviceLabel(s.service_type),
     has_children: s.has_children ? 'Ha' : "Yo'q",
     hotel_stars: s.hotel_stars ? s.hotel_stars + '⭐' : '',
     payment_type: s.payment_type ? paymentLabel(s.payment_type) : '',
@@ -217,5 +239,6 @@ module.exports = {
   monthRange,
   previousMonth,
   paymentLabel,
+  serviceLabel,
   MONTHS_UZ,
 };

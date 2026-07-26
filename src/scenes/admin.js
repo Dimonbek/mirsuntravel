@@ -150,6 +150,11 @@ admin.action('a:stats', async (ctx) => {
   msg += `👥 Jami foydalanuvchilar: *${s.totalUsers}*\n`;
   msg += `🚫 Bloklanganlar: *${s.blockedUsers}*\n\n`;
 
+  if (s.services && s.services.length) {
+    msg += `🧾 *Xizmat turlari:*\n`;
+    s.services.forEach(x => { msg += `• ${report.serviceLabel(x.service_type)} — ${x.c}\n`; });
+    msg += '\n';
+  }
   if (s.destinations.length) {
     msg += `🌍 *Top yo'nalishlar:*\n`;
     s.destinations.forEach((d, i) => { msg += `${i + 1}. ${d.destination} — ${d.c}\n`; });
